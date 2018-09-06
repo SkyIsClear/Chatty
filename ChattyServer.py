@@ -77,7 +77,7 @@ class Server(object):
                                 Users.RemoveBySocket(CurrentSocket)
                                 CurrentSocket.close()
                             else:
-                                self.ProcessMessage(receivedMessage, CurrentSocket)
+                                self.ProcessMessage(receivedMessage, Users.GetBySocket(CurrentSocket))
                 if wlist and self.MessagesToSend:
                     for message in self.MessagesToSend:
                         if not message[1] in self.ConnectedClients.iterkeys():
@@ -106,18 +106,26 @@ class Server(object):
 
     def ProcessMessage(self, message, sender):
         message = json.loads(message)
+
         self.doubleLogin = False
-        for username, socket in self.ConnectedClients.iteritems():
-            if socket == sender:  # finding the username of the sender socket
-                if username == "":
-                    sender = message['username']
-                    if sender in self.ConnectedClients:
-                        self.doubleLogin = True
-                    self.ConnectedClients[sender] = socket
-                    del self.ConnectedClients[username]
-                    break
-                else:
-                    sender = username
+
+        if not sender.username:
+            if not sender.SetName(message['username']):
+                self.doubleLogin = True
+
+
+
+        # for username, socket in self.ConnectedClients.iteritems():
+        #     if socket == sender:  # finding the username of the sender socket
+        #         if username == "":
+        #             sender = message['username']
+        #             if sender in self.ConnectedClients:
+        #                 self.doubleLogin = True
+        #             self.ConnectedClients[sender] = socket
+        #             del self.ConnectedClients[username]
+        #             break
+        #         else:
+        #             sender = username
 
         action = message["opcode"]  # getting action requested by clien
         if action == "register":
@@ -219,18 +227,21 @@ class Users(object):
         for user in Users.UsersList:
             if user.username == username:
                 return user
+        return None
 
     @staticmethod
     def GetBySocket(socket):
         for user in Users.UsersList:
             if user.socket == socket:
                 return user
+        return None
 
     @staticmethod
     def GetByID(id):
         for user in Users.UsersList:
             if user.id == id:
                 return user
+        return None
 
     @staticmethod
     def RemoveByID(id):
@@ -255,6 +266,13 @@ class Users(object):
         self.username = username
         self.id = len(type(self).UsersList) + 1
         type(self).UsersList.append(self)
+
+    def SetName(self, username):
+        if type(self).GetByName(username):
+            return False
+        self.username = username
+        return True
+
 
 
 def main():
