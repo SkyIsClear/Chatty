@@ -5,6 +5,7 @@ import json
 import sqlite3
 import sys
 import smtplib
+from email.mime.text import MIMEText
 from random import randint
 
 
@@ -80,23 +81,22 @@ class Server(object):
                                 self.ProcessMessage(receivedMessage, Users.GetBySocket(CurrentSocket))
                 if wlist and self.MessagesToSend:
                     for message in self.MessagesToSend:
-                        if not message[1] in self.ConnectedClients.iterkeys():
+                        if not message[1] in Users.UsersList:
                             self.MessagesToSend.remove(message)
-                        elif self.ConnectedClients[
-                            message[1]] in wlist:  # checking if any of the messages are for user who can accept them
+                        elif message[1].socket in wlist:  # checking if any of the messages are for user who can accept them
                             encodedMsg = json.dumps(message[0],
                                                     separators=(',', ':'))  # encoding dictionary to text for delivery
                             try:
-                                self.ConnectedClients[message[1]].send(encodedMsg)
+                                message[1].socket.send(encodedMsg)
                                 print "sending message %s to %s" % (encodedMsg, message[1])
                             except socket.error:
-                                del self.ConnectedClients[message[1]]
+                                Users.UsersList.remove(message[1])
+                                # del self.ConnectedClients[message[1]]
                             self.MessagesToSend.remove((message))
                 if self.CloseList:
                     for client in self.CloseList:
-                        self.ConnectedClients[client].close()
-                        del self.ConnectedClients[client]
-                        self.CloseList.remove(client)
+                        client.socket.close()
+                        Users.UsersList.remove(client)
         except Exception as error:
             pass
         # print error, " line: %d" % sys.exc_info()[-1].tb_lineno
@@ -107,12 +107,7 @@ class Server(object):
     def ProcessMessage(self, message, sender):
         message = json.loads(message)
 
-        self.doubleLogin = False
-
-        if not sender.username:
-            if not sender.SetName(message['username']):
-                self.doubleLogin = True
-
+        # self.doubleLogin = False
 
 
         # for username, socket in self.ConnectedClients.iteritems():
@@ -135,12 +130,14 @@ class Server(object):
                                              message['birthDate'], message['password'],
                                              message['image'], 0,))
                 self.MessagesToSend.append(({'opcode': 'regConfirm', 'success': 1, 'error': ""}, sender))
+                sender.SetName(message['username'])
             except Exception as error:
                 print error
                 self.MessagesToSend.append((
                     {'opcode': 'regConfirm', 'success': 0, 'error': "username already exists in system"}, sender))
-                self.ConnectedClients[""] = self.ConnectedClients[sender]
-                del self.ConnectedClients[sender]
+
+                # self.ConnectedClients[""] = self.ConnectedClients[sender]
+                # del self.ConnectedClients[sender]
 
         if action == 'login':
             # checking if password matches the database
@@ -150,10 +147,10 @@ class Server(object):
                 self.MessagesToSend.append((
                     {'opcode': 'loginConfirm', 'success': 0, 'error': 'Username or password are incorrect'}
                     , sender))
-                self.ConnectedClients[""] = self.ConnectedClients[sender]
-                del self.ConnectedClients[sender]
+                # self.ConnectedClients[""] = self.ConnectedClients[sender]
+                # del self.ConnectedClients[sender]
             elif hash == message['password']:
-                if not self.doubleLogin:
+                if sender.SetName(message['username']):  # checks if user is not logged in already
                     self.MessagesToSend.append(({'opcode': 'loginConfirm', 'success': 1, 'error': ''}, sender))
                 else:
                     print "double login"
@@ -162,7 +159,8 @@ class Server(object):
                                                 sender))
         if action == 'logout':
             self.CloseList.append(sender)
-            del self.ConnectedClients[sender]
+            Users.RemoveByName(message['username'])
+            # del self.ConnectedClients[sender]
 
         if action == 'joinRoom':
             if message['roomID'] <= 3 and message['roomID'] >= 0:
@@ -178,34 +176,27 @@ class Server(object):
             print "Rooms: %s" % self.Rooms
             for client in self.Rooms[message['room']]:
                 self.MessagesToSend.append(
-                    ({'opcode': 'messageToYou', 'message': message['message'], 'sender': sender}, client))
+                    ({'opcode': 'messageToYou', 'message': message['message'], 'sender': sender.username}, client))
 
         if action == 'forgotPassword':
             code = randint(100000, 999999)
             email = self.DataBase.Select('''SELECT email FROM users WHERE username = ?''', (message['username'],))
             if email == message['email']:
-                gmail_user = 'serverchatty@gmail.com'
-                gmail_password = 'super secret'
 
-                sent_from = gmail_user
-                to = [email]
-                subject = 'Chatty Password reset'
-                body = "your one time code is %s" % code
-
-                email_text = """\  
-                From: %s  
-                To: %s  
-                Subject: %s
-    
-                %s
-                """ % (sent_from, ", ".join(to), subject, body)
+                fromx = 'serverchatty@gmail.com'
+                to = email
+                msg = MIMEText('Your one time code is %s' % code)
+                msg['Subject'] = 'Chatty Password reset'
+                msg['From'] = fromx
+                msg['To'] = to
 
                 try:
-                    server = smtplib.SMTP_SSL('smtp.gmail.com', 465)
+                    server = smtplib.SMTP('smtp.gmail.com:587')
+                    server.starttls()
                     server.ehlo()
-                    server.login(gmail_user, gmail_password)
-                    server.sendmail(sent_from, to, email_text)
-                    server.close()
+                    server.login('serverchatty@gmail.com', 'super secret')
+                    server.sendmail(fromx, to, msg.as_string())
+                    server.quit()
 
                     print 'Email sent!'
                     self.MessagesToSend.append(({'opcode': 'codeConfirm', 'success': 1, 'error': ''}, sender))
@@ -215,7 +206,7 @@ class Server(object):
                         ({'opcode': 'codeConfirm', 'success': 0, 'error': 'email doesn\'t exist'}, sender))
         if action == 'resetPassword':
             self.DataBase.Update('''UPDATE users SET password = ? WHERE username = ?''',
-                                 (message['newPassword'], sender))
+                                 (message['newPassword'], sender.username))
             self.MessagesToSend.append(({'opcode': 'resetConfirm', 'success': 1}, sender))
 
 
@@ -272,6 +263,9 @@ class Users(object):
             return False
         self.username = username
         return True
+
+    def __str__(self):
+        return 'username: %s id: %s' % (self.username, self.id)
 
 
 

@@ -694,14 +694,11 @@ class ServerConnection(threading.Thread):
         self.MessagesReceived = MessagesReceived
         self.connectedFrame = connectedFrame
 
-        self.Public
-
     def run(self):
         self.running = 1
         self.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.Socket.connect((self.IP, self.PORT))
         try:
-            self.Socket.recv(271)
             while self.running:
                 rlist, wlist, xlist = select.select([self.Socket], [self.Socket], [])
                 if rlist:  # checking if server is sending data
