@@ -7,6 +7,10 @@ import sys
 import smtplib
 from email.mime.text import MIMEText
 from random import randint
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
+from Crypto.Random import get_random_bytes
+from base64 import b64encode, b64decode
 
 
 class SQL:
@@ -66,7 +70,22 @@ class Server(object):
                     for CurrentSocket in rlist:
                         if CurrentSocket is self.serverSocket:
                             (newSocket, address) = self.serverSocket.accept()
-                            a = Users(newSocket)
+                            newUser = Users(newSocket)
+
+                            # four way handshake of exchanging encryption keys
+                            newUser.socket.send(newUser.privateKey.publickey().exportKey())
+                            newUser.ClientPublicKey = RSA.import_key(newUser.socket.recv(271))
+                            print 'Client public key: ' + str(newUser.ClientPublicKey)
+                            cipherRsa = PKCS1_OAEP.new(newUser.ClientPublicKey)
+                            encAESKey = cipherRsa.encrypt(json.dumps({'SKey': b64encode(newUser.SessionKey),
+                                                                      'IV': b64encode(newUser.InitializationVector)}))
+                            newUser.socket.send(encAESKey)
+                            ClientAESKey = json.loads(newUser.socket.recv(128))
+                            newUser.ClientSessionKey = b64decode(ClientAESKey['SKey'])
+                            newUser.ClientInitializationVector = b64decode(ClientAESKey['IV'])
+
+
+
                         else:
                             try:
                                 receivedMessage = CurrentSocket.recv(8192)
@@ -83,7 +102,8 @@ class Server(object):
                     for message in self.MessagesToSend:
                         if not message[1] in Users.UsersList:
                             self.MessagesToSend.remove(message)
-                        elif message[1].socket in wlist:  # checking if any of the messages are for user who can accept them
+                        elif message[
+                            1].socket in wlist:  # checking if any of the messages are for user who can accept them
                             encodedMsg = json.dumps(message[0],
                                                     separators=(',', ':'))  # encoding dictionary to text for delivery
                             try:
@@ -108,7 +128,6 @@ class Server(object):
         message = json.loads(message)
 
         # self.doubleLogin = False
-
 
         # for username, socket in self.ConnectedClients.iteritems():
         #     if socket == sender:  # finding the username of the sender socket
@@ -258,6 +277,14 @@ class Users(object):
         self.id = len(type(self).UsersList) + 1
         type(self).UsersList.append(self)
 
+        self.privateKey = RSA.generate(1024)
+        self.ClientPublicKey = None
+        self.SessionKey = get_random_bytes(16)
+        self.InitializationVector = get_random_bytes(16)
+
+        self.ClientSessionKey = None
+        self.ClientInitializationVector = None
+
     def SetName(self, username):
         if type(self).GetByName(username):
             return False
@@ -266,7 +293,6 @@ class Users(object):
 
     def __str__(self):
         return 'username: %s id: %s' % (self.username, self.id)
-
 
 
 def main():

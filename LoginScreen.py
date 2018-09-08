@@ -11,6 +11,11 @@ import sys
 import json
 import hashlib
 import re
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
+from Crypto.Random import get_random_bytes
+from base64 import b64encode, b64decode
+
 
 MessageEvent, EVT_MESSAGE = wx.lib.newevent.NewEvent()  # creating custom wx event for notifying wx window when a message is received
 
@@ -400,6 +405,7 @@ class ForgotPassword(wx.Frame, Font_inheritance):
         self.Bind(wx.EVT_BUTTON, self.OnSend, self.SendButton)
         self.Show(True)
 
+
     def OnSend(self, event):
         self.username = self.UsernameEntry.GetValue()
         val = Validate()
@@ -693,11 +699,30 @@ class ServerConnection(threading.Thread):
         self.MessagesToSend = MessagesToSend
         self.MessagesReceived = MessagesReceived
         self.connectedFrame = connectedFrame
+        self.SessionKey = None
+        self.InitializationVector = None
 
     def run(self):
         self.running = 1
         self.Socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.Socket.connect((self.IP, self.PORT))
+
+        # four way handshake of exchanging encryption keys
+        self.ServerPublicKey = RSA.import_key(self.Socket.recv(271))
+        self.PublicKey = RSA.generate(1024)
+        self.Socket.send(self.PublicKey.publickey().exportKey())
+        self.ServerAESKey = self.Socket.recv(128)
+        self.ServerAESKey['SKey'] = b64decode(self.ServerAESKey['SKey'])
+        self.ServerAESKey['IV'] = b64decode(self.ServerAESKey['IV'])
+
+        self.SessionKey = get_random_bytes(16)
+        self.InitialziationVector = get_random_bytes(16)
+        cipherRSA = PKCS1_OAEP.new(self.ServerPublicKey)
+        encAESKey = cipherRSA.encrypt(json.dumps({'SKey': b64encode(self.SessionKey),
+                                                  'IV': b64encode(self.InitializationVector)}))
+        self.Socket.send(encAESKey)
+
+
         try:
             while self.running:
                 rlist, wlist, xlist = select.select([self.Socket], [self.Socket], [])
