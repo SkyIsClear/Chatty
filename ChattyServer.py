@@ -75,20 +75,19 @@ class Server(object):
                             # four way handshake of exchanging encryption keys
                             newUser.socket.send(newUser.privateKey.publickey().exportKey())
                             newUser.ClientPublicKey = RSA.import_key(newUser.socket.recv(271))
-                            print 'Client public key: ' + str(newUser.ClientPublicKey)
                             cipherRsa = PKCS1_OAEP.new(newUser.ClientPublicKey)
                             encAESKey = cipherRsa.encrypt(json.dumps({'SKey': b64encode(newUser.SessionKey),
                                                                       'IV': b64encode(newUser.InitializationVector)}))
                             newUser.socket.send(encAESKey)
-                            ClientAESKey = json.loads(newUser.socket.recv(128))
+                            ClientRSACipher = PKCS1_OAEP.new(newUser.privateKey)
+                            ClientAESKey = json.loads(ClientRSACipher.decrypt(newUser.socket.recv(128)))
                             newUser.ClientSessionKey = b64decode(ClientAESKey['SKey'])
                             newUser.ClientInitializationVector = b64decode(ClientAESKey['IV'])
-
-
 
                         else:
                             try:
                                 receivedMessage = CurrentSocket.recv(8192)
+                                messages = receivedMessage.split('|')[:-1]
                             except Exception as error:
                                 # deleting socket from dictionary by finding index of it and finding key which corresponds to it
                                 Users.RemoveBySocket(CurrentSocket)
@@ -97,7 +96,14 @@ class Server(object):
                                 Users.RemoveBySocket(CurrentSocket)
                                 CurrentSocket.close()
                             else:
-                                self.ProcessMessage(receivedMessage, Users.GetBySocket(CurrentSocket))
+                                for message in messages:
+                                    user = Users.GetBySocket(CurrentSocket)
+                                    AESCipher = AES.new(user.ClientSessionKey, AES.MODE_CBC,
+                                                        user.ClientInitializationVector)
+                                    plainText = json.loads(AESCipher.decrypt(b64decode(message)))
+                                    user.ClientSessionKey = plainText['newKey']
+                                    user.ClientInitializationVector = plainText['newIV']
+                                    self.ProcessMessage(plainText['message'], Users.GetBySocket(CurrentSocket))
                 if wlist and self.MessagesToSend:
                     for message in self.MessagesToSend:
                         if not message[1] in Users.UsersList:
@@ -107,8 +113,10 @@ class Server(object):
                             encodedMsg = json.dumps(message[0],
                                                     separators=(',', ':'))  # encoding dictionary to text for delivery
                             try:
-                                message[1].socket.send(encodedMsg)
-                                print "sending message %s to %s" % (encodedMsg, message[1])
+                                print 'encrypting message: %s' % encodedMsg
+                                cipherText = self.encryptMessage(encodedMsg, message[1]) + '|'
+                                message[1].socket.send(cipherText)
+                                print 'sent message: %s to %s' % (cipherText, message[1])
                             except socket.error:
                                 Users.UsersList.remove(message[1])
                                 # del self.ConnectedClients[message[1]]
@@ -119,114 +127,124 @@ class Server(object):
                         Users.UsersList.remove(client)
         except Exception as error:
             pass
-        # print error, " line: %d" % sys.exc_info()[-1].tb_lineno
+            print error, " line: %d" % sys.exc_info()[-1].tb_lineno
         finally:
             print "server closed"
             self.serverSocket.close()
 
-    def ProcessMessage(self, message, sender):
-        message = json.loads(message)
 
-        # self.doubleLogin = False
+def ProcessMessage(self, message, sender):
+    message = json.loads(message)
 
-        # for username, socket in self.ConnectedClients.iteritems():
-        #     if socket == sender:  # finding the username of the sender socket
-        #         if username == "":
-        #             sender = message['username']
-        #             if sender in self.ConnectedClients:
-        #                 self.doubleLogin = True
-        #             self.ConnectedClients[sender] = socket
-        #             del self.ConnectedClients[username]
-        #             break
-        #         else:
-        #             sender = username
+    # self.doubleLogin = False
 
-        action = message["opcode"]  # getting action requested by clien
-        if action == "register":
-            try:
-                self.DataBase.InsertNewUser((message['username'], message['email'],
-                                             message['firstName'], message['lastName'],
-                                             message['birthDate'], message['password'],
-                                             message['image'], 0,))
-                self.MessagesToSend.append(({'opcode': 'regConfirm', 'success': 1, 'error': ""}, sender))
-                sender.SetName(message['username'])
-            except Exception as error:
-                print error
-                self.MessagesToSend.append((
-                    {'opcode': 'regConfirm', 'success': 0, 'error': "username already exists in system"}, sender))
+    # for username, socket in self.ConnectedClients.iteritems():
+    #     if socket == sender:  # finding the username of the sender socket
+    #         if username == "":
+    #             sender = message['username']
+    #             if sender in self.ConnectedClients:
+    #                 self.doubleLogin = True
+    #             self.ConnectedClients[sender] = socket
+    #             del self.ConnectedClients[username]
+    #             break
+    #         else:
+    #             sender = username
 
-                # self.ConnectedClients[""] = self.ConnectedClients[sender]
-                # del self.ConnectedClients[sender]
+    action = message["opcode"]  # getting action requested by clien
+    if action == "register":
+        try:
+            self.DataBase.InsertNewUser((message['username'], message['email'],
+                                         message['firstName'], message['lastName'],
+                                         message['birthDate'], message['password'],
+                                         message['image'], 0,))
+            self.MessagesToSend.append(({'opcode': 'regConfirm', 'success': 1, 'error': ""}, sender))
+            sender.SetName(message['username'])
+        except Exception as error:
+            print error
+            self.MessagesToSend.append((
+                {'opcode': 'regConfirm', 'success': 0, 'error': "username already exists in system"}, sender))
 
-        if action == 'login':
-            # checking if password matches the database
-            hash = self.DataBase.Select(
-                '''SELECT password FROM users WHERE username=?''', (message['username'],))
-            if not hash or hash != message['password']:
-                self.MessagesToSend.append((
-                    {'opcode': 'loginConfirm', 'success': 0, 'error': 'Username or password are incorrect'}
-                    , sender))
-                # self.ConnectedClients[""] = self.ConnectedClients[sender]
-                # del self.ConnectedClients[sender]
-            elif hash == message['password']:
-                if sender.SetName(message['username']):  # checks if user is not logged in already
-                    self.MessagesToSend.append(({'opcode': 'loginConfirm', 'success': 1, 'error': ''}, sender))
-                else:
-                    print "double login"
-                    self.MessagesToSend.append(({'opcode': 'loginConfirm', 'success': 0,
-                                                 'error': 'You are already logged in on another device'},
-                                                sender))
-        if action == 'logout':
-            self.CloseList.append(sender)
-            Users.RemoveByName(message['username'])
+            # self.ConnectedClients[""] = self.ConnectedClients[sender]
             # del self.ConnectedClients[sender]
 
-        if action == 'joinRoom':
-            if message['roomID'] <= 3 and message['roomID'] >= 0:
-                self.Rooms[message['roomID']].append(sender)
-                self.MessagesToSend.append((
-                    {'opcode': 'roomConfirm', 'success': 1, 'error': ""}
-                    , sender))
+    if action == 'login':
+        # checking if password matches the database
+        hash = self.DataBase.Select(
+            '''SELECT password FROM users WHERE username=?''', (message['username'],))
+        if not hash or hash != message['password']:
+            self.MessagesToSend.append((
+                {'opcode': 'loginConfirm', 'success': 0, 'error': 'Username or password are incorrect'}
+                , sender))
+            # self.ConnectedClients[""] = self.ConnectedClients[sender]
+            # del self.ConnectedClients[sender]
+        elif hash == message['password']:
+            if sender.SetName(message['username']):  # checks if user is not logged in already
+                self.MessagesToSend.append(({'opcode': 'loginConfirm', 'success': 1, 'error': ''}, sender))
             else:
+                print "double login"
+                self.MessagesToSend.append(({'opcode': 'loginConfirm', 'success': 0,
+                                             'error': 'You are already logged in on another device'},
+                                            sender))
+    if action == 'logout':
+        self.CloseList.append(sender)
+        Users.RemoveByName(message['username'])
+        # del self.ConnectedClients[sender]
+
+    if action == 'joinRoom':
+        if message['roomID'] <= 3 and message['roomID'] >= 0:
+            self.Rooms[message['roomID']].append(sender)
+            self.MessagesToSend.append((
+                {'opcode': 'roomConfirm', 'success': 1, 'error': ""}
+                , sender))
+        else:
+            self.MessagesToSend.append(
+                ({'opcode': 'roomConfirm', 'success': 0, 'error': "room does not exist"}, sender))
+
+    if action == 'message':
+        print "Rooms: %s" % self.Rooms
+        for client in self.Rooms[message['room']]:
+            self.MessagesToSend.append(
+                ({'opcode': 'messageToYou', 'message': message['message'], 'sender': sender.username}, client))
+
+    if action == 'forgotPassword':
+        code = randint(100000, 999999)
+        email = self.DataBase.Select('''SELECT email FROM users WHERE username = ?''', (message['username'],))
+        if email == message['email']:
+
+            fromx = 'serverchatty@gmail.com'
+            to = email
+            msg = MIMEText('Your one time code is %s' % code)
+            msg['Subject'] = 'Chatty Password reset'
+            msg['From'] = fromx
+            msg['To'] = to
+
+            try:
+                server = smtplib.SMTP('smtp.gmail.com:587')
+                server.starttls()
+                server.ehlo()
+                server.login('serverchatty@gmail.com', 'super secret')
+                server.sendmail(fromx, to, msg.as_string())
+                server.quit()
+
+                print 'Email sent!'
+                self.MessagesToSend.append(({'opcode': 'codeConfirm', 'success': 1, 'error': ''}, sender))
+            except:
+                print 'Something went wrong...'
                 self.MessagesToSend.append(
-                    ({'opcode': 'roomConfirm', 'success': 0, 'error': "room does not exist"}, sender))
+                    ({'opcode': 'codeConfirm', 'success': 0, 'error': 'email doesn\'t exist'}, sender))
+    if action == 'resetPassword':
+        self.DataBase.Update('''UPDATE users SET password = ? WHERE username = ?''',
+                             (message['newPassword'], sender.username))
+        self.MessagesToSend.append(({'opcode': 'resetConfirm', 'success': 1}, sender))
 
-        if action == 'message':
-            print "Rooms: %s" % self.Rooms
-            for client in self.Rooms[message['room']]:
-                self.MessagesToSend.append(
-                    ({'opcode': 'messageToYou', 'message': message['message'], 'sender': sender.username}, client))
 
-        if action == 'forgotPassword':
-            code = randint(100000, 999999)
-            email = self.DataBase.Select('''SELECT email FROM users WHERE username = ?''', (message['username'],))
-            if email == message['email']:
-
-                fromx = 'serverchatty@gmail.com'
-                to = email
-                msg = MIMEText('Your one time code is %s' % code)
-                msg['Subject'] = 'Chatty Password reset'
-                msg['From'] = fromx
-                msg['To'] = to
-
-                try:
-                    server = smtplib.SMTP('smtp.gmail.com:587')
-                    server.starttls()
-                    server.ehlo()
-                    server.login('serverchatty@gmail.com', 'super secret')
-                    server.sendmail(fromx, to, msg.as_string())
-                    server.quit()
-
-                    print 'Email sent!'
-                    self.MessagesToSend.append(({'opcode': 'codeConfirm', 'success': 1, 'error': ''}, sender))
-                except:
-                    print 'Something went wrong...'
-                    self.MessagesToSend.append(
-                        ({'opcode': 'codeConfirm', 'success': 0, 'error': 'email doesn\'t exist'}, sender))
-        if action == 'resetPassword':
-            self.DataBase.Update('''UPDATE users SET password = ? WHERE username = ?''',
-                                 (message['newPassword'], sender.username))
-            self.MessagesToSend.append(({'opcode': 'resetConfirm', 'success': 1}, sender))
+def encryptMessage(self, message, target):
+    OldAESCipher = AES.new(target.SessionKey, AES.MODE_CBC, target.InitializationVector)
+    target.GenerateNewKey()
+    cipherText = b64encode(OldAESCipher.encrypt(json.dumps(
+        {'newKey': b64encode(target.SessionKey), 'newIV': b64encode(target.InitializationVector),
+         'message': message})))
+    return cipherText
 
 
 class Users(object):
@@ -290,6 +308,10 @@ class Users(object):
             return False
         self.username = username
         return True
+
+    def GenerateNewKey(self):
+        self.SessionKey = get_random_bytes(16)
+        self.InitializationVector = get_random_bytes(16)
 
     def __str__(self):
         return 'username: %s id: %s' % (self.username, self.id)

@@ -16,7 +16,6 @@ from Crypto.Cipher import AES, PKCS1_OAEP
 from Crypto.Random import get_random_bytes
 from base64 import b64encode, b64decode
 
-
 MessageEvent, EVT_MESSAGE = wx.lib.newevent.NewEvent()  # creating custom wx event for notifying wx window when a message is received
 
 
@@ -405,7 +404,6 @@ class ForgotPassword(wx.Frame, Font_inheritance):
         self.Bind(wx.EVT_BUTTON, self.OnSend, self.SendButton)
         self.Show(True)
 
-
     def OnSend(self, event):
         self.username = self.UsernameEntry.GetValue()
         val = Validate()
@@ -708,20 +706,22 @@ class ServerConnection(threading.Thread):
         self.Socket.connect((self.IP, self.PORT))
 
         # four way handshake of exchanging encryption keys
-        self.ServerPublicKey = RSA.import_key(self.Socket.recv(271))
+        self.PublicKeyReceived = self.Socket.recv(271)
+        self.ServerPublicKey = RSA.import_key(self.PublicKeyReceived)
         self.PublicKey = RSA.generate(1024)
         self.Socket.send(self.PublicKey.publickey().exportKey())
-        self.ServerAESKey = self.Socket.recv(128)
+
+        self.ServerRSACipher = PKCS1_OAEP.new(self.PublicKey)
+        self.ServerAESKey = json.loads(self.ServerRSACipher.decrypt(self.Socket.recv(128)))
         self.ServerAESKey['SKey'] = b64decode(self.ServerAESKey['SKey'])
         self.ServerAESKey['IV'] = b64decode(self.ServerAESKey['IV'])
 
         self.SessionKey = get_random_bytes(16)
         self.InitialziationVector = get_random_bytes(16)
         cipherRSA = PKCS1_OAEP.new(self.ServerPublicKey)
-        encAESKey = cipherRSA.encrypt(json.dumps({'SKey': b64encode(self.SessionKey),
-                                                  'IV': b64encode(self.InitializationVector)}))
+        encAESKey = cipherRSA.encrypt(json.dumps({'SKey': b64encode(str(self.SessionKey)),
+                                                  'IV': b64encode(str(self.InitializationVector))}))
         self.Socket.send(encAESKey)
-
 
         try:
             while self.running:
@@ -731,10 +731,15 @@ class ServerConnection(threading.Thread):
                     # print msg
                     if msg:
                         # print "raw Message: %s" % msg
-                        messages = msg.split('}{')
+                        messages = msg.split('|')[:-1]
                         for message in messages:
-                            decodedMsg = json.loads('{' + message + '}') if len(messages) > 1 else json.loads(
-                                message)  # decoding message
+                            message = b64decode(message)
+                            AESCipher = AES.new(self.ServerAESKey['SKey'], AES.MODE_CBC, self.ServerAESKey['IV'])
+                            plainText = json.loads(AESCipher.decrypt(message))
+                            self.ServerAESKey['SKey'] = plainText['newKey']
+                            self.ServerAESKey['IV'] = plainText['newIV']
+                            decodedMsg = json.loads(plainText['message'])
+
                             self.MessagesReceived.put(decodedMsg)  # once lock was acquired appends message
                             wx.PostEvent(self.connectedFrame, MessageEvent())
                             # print "posted event"
@@ -748,8 +753,9 @@ class ServerConnection(threading.Thread):
                         msg = self.MessagesToSend.get()
                         # print "sending message: %s" % msg
                         encodedMsg = json.dumps(msg, separators=(',', ':'))  # encoding message before delivery
+                        CipherText = self.encryptMessage(encodedMsg) + '|'
                         # print "encoded message: %s" % encodedMsg
-                        self.Socket.send(encodedMsg)
+                        self.Socket.send(CipherText)
             self.Socket.close()
         except Exception as error:
             if "errno" in error:
@@ -757,6 +763,18 @@ class ServerConnection(threading.Thread):
                 self.Socket.close()
             else:
                 raise
+
+    def encryptMessage(self, message):
+        AESCipher = AES.new(self.SessionKey, AES.MODE_CBC, self.InitializationVector)
+        self.generateKeys()
+        CipherText = b64encode(AESCipher.encrypt(json.dumps(
+            {'newKey': b64encode(self.SessionKey), 'newIV': b64encode(self.InitializationVector),
+             'message': message})))
+        return CipherText
+
+    def generateKeys(self):
+        self.SessionKey = get_random_bytes(16)
+        self.InitializationVector = get_random_bytes(16)
 
     def SetFrame(self, frame):
         # print "set frame to %s" % frame
