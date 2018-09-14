@@ -98,11 +98,12 @@ class Server(object):
                             else:
                                 for message in messages:
                                     user = Users.GetBySocket(CurrentSocket)
+                                    print user
                                     AESCipher = AES.new(user.ClientSessionKey, AES.MODE_CBC,
                                                         user.ClientInitializationVector)
-                                    plainText = json.loads(AESCipher.decrypt(b64decode(message)))
-                                    user.ClientSessionKey = plainText['newKey']
-                                    user.ClientInitializationVector = plainText['newIV']
+                                    plainText = json.loads(str(AESCipher.decrypt(b64decode(message))).strip('$'))
+                                    user.ClientSessionKey = b64decode(plainText['newKey'])
+                                    user.ClientInitializationVector = b64decode(plainText['newIV'])
                                     self.ProcessMessage(plainText['message'], Users.GetBySocket(CurrentSocket))
                 if wlist and self.MessagesToSend:
                     for message in self.MessagesToSend:
@@ -241,9 +242,14 @@ def ProcessMessage(self, message, sender):
 def encryptMessage(self, message, target):
     OldAESCipher = AES.new(target.SessionKey, AES.MODE_CBC, target.InitializationVector)
     target.GenerateNewKey()
-    cipherText = b64encode(OldAESCipher.encrypt(json.dumps(
+    plainText = json.dumps(
         {'newKey': b64encode(target.SessionKey), 'newIV': b64encode(target.InitializationVector),
-         'message': message})))
+         'message': message})
+    print 'plain text: %s' % plainText
+    rlen = 16 - (len(plainText) % 16)
+    plainText = plainText + '$' * rlen
+    print 'padded plain text: %s' % plainText
+    cipherText = b64encode(OldAESCipher.encrypt(plainText))
     return cipherText
 
 
@@ -314,7 +320,8 @@ class Users(object):
         self.InitializationVector = get_random_bytes(16)
 
     def __str__(self):
-        return 'username: %s id: %s' % (self.username, self.id)
+        return 'username: %s, id: %s,\n private key: |%s| \n client public key: |%s| \n session key: |%s| \n client initialization vector: |%s|' % (
+        self.username, self.id, self.privateKey.exportKey(), self.ClientPublicKey.exportKey(), self.SessionKey, self.InitializationVector)
 
 
 def main():

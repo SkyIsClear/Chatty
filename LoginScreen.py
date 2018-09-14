@@ -735,7 +735,7 @@ class ServerConnection(threading.Thread):
                         for message in messages:
                             message = b64decode(message)
                             AESCipher = AES.new(self.ServerAESKey['SKey'], AES.MODE_CBC, self.ServerAESKey['IV'])
-                            plainText = json.loads(AESCipher.decrypt(message))
+                            plainText = json.loads(str(AESCipher.decrypt(message)).strip('$'))
                             self.ServerAESKey['SKey'] = plainText['newKey']
                             self.ServerAESKey['IV'] = plainText['newIV']
                             decodedMsg = json.loads(plainText['message'])
@@ -767,9 +767,14 @@ class ServerConnection(threading.Thread):
     def encryptMessage(self, message):
         AESCipher = AES.new(self.SessionKey, AES.MODE_CBC, self.InitializationVector)
         self.generateKeys()
-        CipherText = b64encode(AESCipher.encrypt(json.dumps(
+        plainText = json.dumps(
             {'newKey': b64encode(self.SessionKey), 'newIV': b64encode(self.InitializationVector),
-             'message': message})))
+             'message': message})
+        print 'plainText: %s' % plainText
+        rlen = 16 - (len(plainText) % 16)
+        plainText = plainText + '$'*rlen
+        print 'padded plain text: %s' % plainText
+        CipherText = b64encode(AESCipher.encrypt(plainText))
         return CipherText
 
     def generateKeys(self):
