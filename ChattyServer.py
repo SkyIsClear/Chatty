@@ -1,5 +1,6 @@
 # server for the ChattY chat
 # made by Yedaya Katsman 26/07/2018
+# for a school project summer of 2018
 import socket, select, errno
 import json
 import sqlite3
@@ -7,13 +8,21 @@ import sys
 import smtplib
 from email.mime.text import MIMEText
 from random import randint
+from Crypto.PublicKey import RSA
+from Crypto.Cipher import AES, PKCS1_OAEP
+from Crypto.Random import get_random_bytes
+from base64 import b64encode, b64decode
 
 
 class SQL:
+    # class that controls all communications between the server and the sql database
+
     def __init__(self):
+        # connects to database
         self.Connection = sqlite3.connect('ChattyQuery.db')
         self.cursor = self.Connection.cursor()
         try:
+            # creqating sql table for all users
             self.cursor.execute('''CREATE TABLE users
                                    (username TEXT PRIMARY KEY, email TEXT, firstName TEXT,
                                     lastName TEXT, birthDate TEXT, password TEXT, image INTEGER, code INTEGER)''')
@@ -22,15 +31,17 @@ class SQL:
             pass
 
     def InsertNewUser(self, regInfo):
+        # function to create a new user in the sy
         print "inserting new user..."
         self.cursor.execute('''INSERT INTO users VALUES (?, ?, ?, ?, ?, ?, ?, ?)''', regInfo)
         self.Connection.commit()
 
     def Select(self, command, args):
         self.cursor.execute(command, args)
-        results = self.cursor.fetchall()
+        results = self.cursor.fetchone()
         if results:
-            return results[0][0]
+            return results[0]
+        return None
 
     def Update(self, command, args):
         self.cursor.execute(command, args)
@@ -66,10 +77,28 @@ class Server(object):
                     for CurrentSocket in rlist:
                         if CurrentSocket is self.serverSocket:
                             (newSocket, address) = self.serverSocket.accept()
-                            a = Users(newSocket)
+                            newUser = Users(newSocket)
+                            try:
+                                # four way handshake of exchanging encryption keys
+                                newUser.socket.send(newUser.privateKey.publickey().exportKey())
+                                newUser.ClientPublicKey = RSA.import_key(newUser.socket.recv(271))
+                                cipherRsa = PKCS1_OAEP.new(newUser.ClientPublicKey)
+                                # print 'IV length: %s' % len(newUser.InitializationVector)
+                                encAESKey = cipherRsa.encrypt(json.dumps({'SKey': b64encode(newUser.SessionKey),
+                                                                          'IV': b64encode(
+                                                                              newUser.InitializationVector)}))
+                                newUser.socket.send(encAESKey)
+                                ClientRSACipher = PKCS1_OAEP.new(newUser.privateKey)
+                                ClientAESKey = json.loads(ClientRSACipher.decrypt(newUser.socket.recv(128)))
+                                # print 'client aes key: %s' % ClientAESKey
+                                newUser.ClientSessionKey = b64decode(ClientAESKey['SKey'])
+                                newUser.ClientInitializationVector = b64decode(ClientAESKey['IV'])
+                            except Exception as error:
+                                Users.UsersList.remove(newUser)
                         else:
                             try:
                                 receivedMessage = CurrentSocket.recv(8192)
+                                messages = receivedMessage.split('|')[:-1]
                             except Exception as error:
                                 # deleting socket from dictionary by finding index of it and finding key which corresponds to it
                                 Users.RemoveBySocket(CurrentSocket)
@@ -78,17 +107,30 @@ class Server(object):
                                 Users.RemoveBySocket(CurrentSocket)
                                 CurrentSocket.close()
                             else:
-                                self.ProcessMessage(receivedMessage, Users.GetBySocket(CurrentSocket))
+                                for message in messages:
+                                    user = Users.GetBySocket(CurrentSocket)
+                                    # print "IV: %s" % user.ClientInitializationVector
+                                    # print 'IV length: %s' % len(user.ClientInitializationVector)
+                                    AESCipher = AES.new(user.ClientSessionKey, AES.MODE_CBC,
+                                                        user.ClientInitializationVector)
+                                    plainText = json.loads(str(AESCipher.decrypt(b64decode(message))).strip('$'))
+                                    # print 'plain text: %s' % plainText
+                                    user.ClientSessionKey = b64decode(plainText['newKey'])
+                                    user.ClientInitializationVector = b64decode(plainText['newIV'])
+                                    self.ProcessMessage(plainText['message'], Users.GetBySocket(CurrentSocket))
                 if wlist and self.MessagesToSend:
                     for message in self.MessagesToSend:
                         if not message[1] in Users.UsersList:
                             self.MessagesToSend.remove(message)
-                        elif message[1].socket in wlist:  # checking if any of the messages are for user who can accept them
+                        elif message[
+                            1].socket in wlist:  # checking if any of the messages are for user who can accept them
                             encodedMsg = json.dumps(message[0],
                                                     separators=(',', ':'))  # encoding dictionary to text for delivery
                             try:
-                                message[1].socket.send(encodedMsg)
-                                print "sending message %s to %s" % (encodedMsg, message[1])
+                                print 'encrypting message: %s' % encodedMsg
+                                cipherText = self.encryptMessage(encodedMsg, message[1]) + '|'
+                                message[1].socket.send(cipherText)
+                                # print 'sent message: %s to %s' % (cipherText, message[1])
                             except socket.error:
                                 Users.UsersList.remove(message[1])
                                 # del self.ConnectedClients[message[1]]
@@ -99,7 +141,7 @@ class Server(object):
                         Users.UsersList.remove(client)
         except Exception as error:
             pass
-        # print error, " line: %d" % sys.exc_info()[-1].tb_lineno
+            print error, " line: %d" % sys.exc_info()[-1].tb_lineno
         finally:
             print "server closed"
             self.serverSocket.close()
@@ -107,37 +149,22 @@ class Server(object):
     def ProcessMessage(self, message, sender):
         message = json.loads(message)
 
-        # self.doubleLogin = False
-
-
-        # for username, socket in self.ConnectedClients.iteritems():
-        #     if socket == sender:  # finding the username of the sender socket
-        #         if username == "":
-        #             sender = message['username']
-        #             if sender in self.ConnectedClients:
-        #                 self.doubleLogin = True
-        #             self.ConnectedClients[sender] = socket
-        #             del self.ConnectedClients[username]
-        #             break
-        #         else:
-        #             sender = username
-
         action = message["opcode"]  # getting action requested by clien
         if action == "register":
-            try:
-                self.DataBase.InsertNewUser((message['username'], message['email'],
-                                             message['firstName'], message['lastName'],
-                                             message['birthDate'], message['password'],
-                                             message['image'], 0,))
-                self.MessagesToSend.append(({'opcode': 'regConfirm', 'success': 1, 'error': ""}, sender))
-                sender.SetName(message['username'])
-            except Exception as error:
-                print error
+            if self.DataBase.Select('SELECT username FROM users WHERE email=?', (message['email'],)):
+                self.MessagesToSend.append((
+                    {'opcode': 'regConfirm', 'success': 0, 'error': "email is already in use"}, sender))
+                return
+            if self.DataBase.Select('SELECT email FROM users WHERE username=?', (message['username'],)):
                 self.MessagesToSend.append((
                     {'opcode': 'regConfirm', 'success': 0, 'error': "username already exists in system"}, sender))
-
-                # self.ConnectedClients[""] = self.ConnectedClients[sender]
-                # del self.ConnectedClients[sender]
+                return
+            self.DataBase.InsertNewUser((message['username'], message['email'],
+                                         message['firstName'], message['lastName'],
+                                         message['birthDate'], message['password'],
+                                         message['image'], 0,))
+            self.MessagesToSend.append(({'opcode': 'regConfirm', 'success': 1, 'error': ""}, sender))
+            sender.SetName(message['username'])
 
         if action == 'login':
             # checking if password matches the database
@@ -209,8 +236,25 @@ class Server(object):
                                  (message['newPassword'], sender.username))
             self.MessagesToSend.append(({'opcode': 'resetConfirm', 'success': 1}, sender))
 
+    def encryptMessage(self, message, target):
+        OldAESCipher = AES.new(target.SessionKey, AES.MODE_CBC, target.InitializationVector)
+        target.GenerateNewKey()
+        plainText = json.dumps(
+            {'newKey': b64encode(target.SessionKey), 'newIV': b64encode(target.InitializationVector),
+             'message': message})
+        # print 'plain text: %s' % plainText
+        rlen = 16 - (len(plainText) % 16)
+        plainText = plainText + '$' * rlen
+        # print 'padded plain text: %s' % plainText
+        cipherText = b64encode(OldAESCipher.encrypt(plainText))
+        return cipherText
+
 
 class Users(object):
+    # users class. each instance is a separate user that has username, socket, id etc.
+    #   the class keeps track of all users and has static methods to find certain users
+    #     or delete them
+
     UsersList = []
 
     @staticmethod
@@ -258,20 +302,35 @@ class Users(object):
         self.id = len(type(self).UsersList) + 1
         type(self).UsersList.append(self)
 
+        self.privateKey = RSA.generate(1024)
+        self.ClientPublicKey = None
+        self.SessionKey = get_random_bytes(16)
+        self.InitializationVector = get_random_bytes(16)
+
+        self.ClientSessionKey = None
+        self.ClientInitializationVector = None
+
     def SetName(self, username):
         if type(self).GetByName(username):
             return False
         self.username = username
         return True
 
-    def __str__(self):
-        return 'username: %s id: %s' % (self.username, self.id)
+    def GenerateNewKey(self):
+        self.SessionKey = get_random_bytes(16)
+        self.InitializationVector = get_random_bytes(16)
 
+    def __str__(self):
+        return 'username: %s, id: %s,\n private key: |%s| \n client public key: |%s| \n session key: |%s| \n client initialization vector: |%s|' % (
+            self.username, self.id, self.privateKey.exportKey(), self.ClientPublicKey.exportKey(), self.SessionKey,
+            self.InitializationVector)
 
 
 def main():
     server = Server()
+    # setting up server
     server.loop()
+    # starting the server infinite loop
 
 
 if __name__ == "__main__":
