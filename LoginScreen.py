@@ -29,6 +29,7 @@ class Font_inheritance(object):
         self.FontEntries = wx.Font(11, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
         self.FontMessage = wx.Font(11, wx.DEFAULT, wx.NORMAL, wx.NORMAL)
         self.FontSendingMessage = wx.Font(15, wx.MODERN, wx.NORMAL, wx.NORMAL)
+        self.FontRoomSelection = wx.Font(18, wx.MODERN, wx.NORMAL, wx.NORMAL)
 
 
 class LoginPanel(wx.Panel, Font_inheritance):
@@ -71,10 +72,6 @@ class LoginPanel(wx.Panel, Font_inheritance):
                                          pos=(self.StartOfLabels + 97, 110),
                                          style=wx.TE_PASSWORD)
 
-        self.ForgotPasswordButton = wx.Button(self, label='Forgot Password?', pos=(self.StartOfLabels + 100, 130))
-        self.ForgotPasswordButton.SetFont(self.FontDoYouAlready)
-        self.Bind(wx.EVT_BUTTON, self.ForgotPassword, self.ForgotPasswordButton)
-
         # Error message static text declaration for later use
         self.ErrorMsg = wx.StaticText(self, label="", pos=(self.StartOfLabels, 135))
         self.ErrorMsg.SetForegroundColour((255, 0, 0))
@@ -93,7 +90,10 @@ class LoginPanel(wx.Panel, Font_inheritance):
         self.SignUpButton_button = wx.Button(self, label="Click here to sign up!", pos=(self.StartOfLabels + 159, 180))
         self.SignUpButton_button.SetFont(self.FontDoYouAlready)
         self.SignUpButton_button.SetForegroundColour((0, 0, 255))
-        # self.SignUpButton_button.Hide()
+
+        self.ForgotPasswordButton = wx.Button(self, label='Forgot Password?', pos=(self.StartOfLabels + 90, 210))
+        self.ForgotPasswordButton.SetFont(self.FontDoYouAlready)
+        self.Bind(wx.EVT_BUTTON, self.ForgotPassword, self.ForgotPasswordButton)
 
         self.Bind(wx.EVT_BUTTON, self.GoSignUp, self.SignUpButton_button)
 
@@ -337,21 +337,23 @@ class SignupPanel(wx.Panel, Font_inheritance):
                            self.DayDrop.GetValue())
         if not DateVal[0]:
             self.ErrorLabel.SetLabel(PassVal[1])
+            return
 
         NameVal = val.Name(self.FirstNameEntry.GetValue(), self.SurnameEntry.GetValue())
         if not NameVal[0]:
             self.ErrorLabel.SetLabel(NameVal[1])
-        if self.PasswordEntry.GetValue() == self.ConfirmPassEntry.GetValue():
-            self.MessageToSend.put(
-                {'opcode': 'register', 'username': self.UsernameEntry.GetValue(), 'email': self.EmailEntry.GetValue(),
-                 'firstName': self.FirstNameEntry.GetValue(), 'lastName': self.SurnameEntry.GetValue(),
-                 'birthDate': '%s-%s-%s' % (
-                     self.YearDrop.GetValue(),
-                     self.month_lst.index(self.MonthDrop.GetValue()) + 1,
-                     self.DayDrop.GetValue()
-                 ),
-                 'password': str(hashlib.sha256(self.PasswordEntry.GetValue()).hexdigest()),
-                 'image': self.SelectedImage})
+            return
+
+        self.MessageToSend.put(
+            {'opcode': 'register', 'username': self.UsernameEntry.GetValue(), 'email': self.EmailEntry.GetValue(),
+             'firstName': self.FirstNameEntry.GetValue(), 'lastName': self.SurnameEntry.GetValue(),
+             'birthDate': '%s-%s-%s' % (
+                 self.YearDrop.GetValue(),
+                 self.month_lst.index(self.MonthDrop.GetValue()) + 1,
+                 self.DayDrop.GetValue()
+             ),
+             'password': str(hashlib.sha256(self.PasswordEntry.GetValue()).hexdigest()),
+             'image': self.SelectedImage})
 
     def OnLogin(self, event):
         self.parent.LogIn()
@@ -529,10 +531,9 @@ class MessagesPanel(wx.lib.scrolledpanel.ScrolledPanel, Font_inheritance):
     def __init__(self, parent, size):
         self.size = size
         self.parent = parent
-        self.NumMessages = 0
 
-        # print self.size
-        # wx.lib.scrolledpanel.__init__(self, self.parent, size=self.size, style=wx.VSCROLL)
+        self.messageList = []
+
         wx.lib.scrolledpanel.ScrolledPanel.__init__(self, self.parent, size=self.size)
         Font_inheritance.__init__(self)
         self.MessagesSizer = wx.BoxSizer(wx.VERTICAL)
@@ -541,30 +542,25 @@ class MessagesPanel(wx.lib.scrolledpanel.ScrolledPanel, Font_inheritance):
 
         self.SetupScrolling(scroll_x=False, scroll_y=True)
 
-        # self.AddMessage("toataly random messagte that isn't made up", "RealUser", 2)
-
     def AddMessage(self, message, sender, image):
-        self.NumMessages += 1
-        self.NewMessage = wx.StaticText(self, label=sender + ": " + message)
-        self.NewMessage.SetFont(self.FontMessage)
-        # self.NewMessage.SetForegroundColour('#FFFFFF')
-        self.NewMessage.Wrap(self.size[0] - 30)
-        self.MessagesSizer.Add(self.NewMessage)
-        # print "added message to screen"
-        self.MessagesSizer.AddSpacer(5)
+        self.messageList.append((message, sender, image))
+        self.Freeze()
+        self.MessagesSizer.Clear(True)
 
-        evt = wx.ScrollEvent(wx.EVT_SCROLL_BOTTOM.typeId, self.GetId())
-        wx.PostEvent(self.GetEventHandler(), evt)
+        for msg in self.messageList[::-1]:
+            self.NewMessage = wx.StaticText(self, label=msg[1] + ": " + msg[0])
+            self.NewMessage.SetFont(self.FontMessage)
+            # self.NewMessage.SetForegroundColour('#FFFFFF')
+            self.NewMessage.Wrap(self.size[0] - 30)
+            self.MessagesSizer.Add(self.NewMessage)
+            self.MessagesSizer.AddSpacer(5)
 
-        # self.GetEventHandler().ProcessEvent(wx.EVT_SCROLL_BOTTOM())
-        # print self.GetScrollPos(wx.VERTICAL)
-        # print self.NumMessages
-        # self.SetScroll
-        # if self.NumMessages > 13:
-        #     self.SetScrollPos(wx.VERTICAL, self.NumMessages-13)
-        # self.SetScrollPos(wx.VERTICAL, self.GetScrollRange(wx.VERTICAL))
+        self.Thaw()
 
-        # self.ShowScrollbars(self.GetScrollRange(wx.HORIZONTAL), self.GetScrollRange(wx.VERTICAL))
+
+class ConnectedUsersPanel(wx.Panel):
+    def __init__(self):
+        wx.Panel.__init__(self)
 
 
 class Room(wx.Frame, Font_inheritance):
@@ -634,31 +630,39 @@ class Room(wx.Frame, Font_inheritance):
             self.SendBox.SetFocus()
 
 
-class ChooseFrame(wx.Frame):
+class ChooseFrame(wx.Frame, Font_inheritance):
     def __init__(self, parent, MessagesToSend, MessagesReceived):
         self.MessagesToSend = MessagesToSend
         self.MessagesReceived = MessagesReceived
         self.parent = parent
         self.room = "Sport room"  # deafault room
         self.RoomID = 0
-        wx.Frame.__init__(self, None, wx.ID_ANY, 'Chatty - chat rooms for you')
-
+        self.size = (450, 200)
+        wx.Frame.__init__(self, None, wx.ID_ANY, 'Chatty - chat rooms for you', size=self.size)
+        Font_inheritance.__init__(self)
         self.Bind(EVT_MESSAGE, self.GotData)
+
+        self.SetMinSize(self.size)
+        self.SetMaxSize(self.size)
 
         self.PanelSizer = wx.GridBagSizer()
         self.SportLabel = wx.Button(self, id=0, label="Sport", size=(200, 70))
+        self.SportLabel.SetFont(self.FontRoomSelection)
         self.PanelSizer.Add(self.SportLabel, pos=(0, 0))
         self.Bind(wx.EVT_BUTTON, self.Choose, self.SportLabel)
 
         self.GamingLabel = wx.Button(self, id=1, label="Gaming", size=(200, 70))
+        self.GamingLabel.SetFont(self.FontRoomSelection)
         self.PanelSizer.Add(self.GamingLabel, pos=(0, 1))
         self.Bind(wx.EVT_BUTTON, self.Choose, self.GamingLabel)
 
         self.FoodLabel = wx.Button(self, id=2, label="Food", size=(200, 70))
+        self.FoodLabel.SetFont(self.FontRoomSelection)
         self.PanelSizer.Add(self.FoodLabel, pos=(1, 0))
         self.Bind(wx.EVT_BUTTON, self.Choose, self.FoodLabel)
 
         self.MoviesLabel = wx.Button(self, id=3, label="Movies", size=(200, 70))
+        self.MoviesLabel.SetFont(self.FontRoomSelection)
         self.PanelSizer.Add(self.MoviesLabel, pos=(1, 1))
         self.Bind(wx.EVT_BUTTON, self.Choose, self.MoviesLabel)
 
@@ -712,12 +716,14 @@ class ServerConnection(threading.Thread):
         self.Socket.send(self.PublicKey.publickey().exportKey())
 
         self.ServerRSACipher = PKCS1_OAEP.new(self.PublicKey)
+        # getting AES key from server
         self.ServerAESKey = json.loads(self.ServerRSACipher.decrypt(self.Socket.recv(128)))
         self.ServerAESKey['SKey'] = b64decode(self.ServerAESKey['SKey'])
         self.ServerAESKey['IV'] = b64decode(self.ServerAESKey['IV'])
+        # print 'IV length: %s' % len(self.ServerAESKey['IV'])
 
         self.SessionKey = get_random_bytes(16)
-        self.InitialziationVector = get_random_bytes(16)
+        self.InitializationVector = get_random_bytes(16)
         cipherRSA = PKCS1_OAEP.new(self.ServerPublicKey)
         encAESKey = cipherRSA.encrypt(json.dumps({'SKey': b64encode(str(self.SessionKey)),
                                                   'IV': b64encode(str(self.InitializationVector))}))
@@ -736,8 +742,8 @@ class ServerConnection(threading.Thread):
                             message = b64decode(message)
                             AESCipher = AES.new(self.ServerAESKey['SKey'], AES.MODE_CBC, self.ServerAESKey['IV'])
                             plainText = json.loads(str(AESCipher.decrypt(message)).strip('$'))
-                            self.ServerAESKey['SKey'] = plainText['newKey']
-                            self.ServerAESKey['IV'] = plainText['newIV']
+                            self.ServerAESKey['SKey'] = b64decode(plainText['newKey'])
+                            self.ServerAESKey['IV'] = b64decode(plainText['newIV'])
                             decodedMsg = json.loads(plainText['message'])
 
                             self.MessagesReceived.put(decodedMsg)  # once lock was acquired appends message
@@ -758,22 +764,25 @@ class ServerConnection(threading.Thread):
                         self.Socket.send(CipherText)
             self.Socket.close()
         except Exception as error:
-            if "errno" in error:
+            if "Errno" in error:
                 # print "error" + str(error) + "line: %d" % sys.exc_info()[-1].tb_lineno
                 self.Socket.close()
+                print 'server closed. shutting down.'
             else:
                 raise
 
     def encryptMessage(self, message):
         AESCipher = AES.new(self.SessionKey, AES.MODE_CBC, self.InitializationVector)
         self.generateKeys()
+        # print 'new IV: |%s|' % self.InitializationVector
         plainText = json.dumps(
             {'newKey': b64encode(self.SessionKey), 'newIV': b64encode(self.InitializationVector),
              'message': message})
-        print 'plainText: %s' % plainText
+        # print 'IV length: %s' % len(self.InitializationVector)
+        # print 'plainText: %s' % plainText
         rlen = 16 - (len(plainText) % 16)
-        plainText = plainText + '$'*rlen
-        print 'padded plain text: %s' % plainText
+        plainText = plainText + '$' * rlen
+        # print 'padded plain text: %s' % plainText
         CipherText = b64encode(AESCipher.encrypt(plainText))
         return CipherText
 
@@ -854,12 +863,13 @@ class Validate(object):
     def Name(self, first, last):
         if not first or not last:
             return False, 'You did not complete all fields'
-        if not re.search(r'[^\.a-zA-Z]', first):
+        if not bool(re.search(r'[^.a-zA-Z.]', first)):
             return False, 'name must contain only letters'
-        if not re.search(r'[^\.a-zA-Z]', last):
+        if not bool(re.search(r'[^.a-zA-Z.]', last)):
             return False, 'name must contain only letters'
         if len(first) < 2 or len(last) < 2:
             return False, 'name is invalid'
+        return True, ''
 
     def calculateAge(self, born):
         today = datetime.date.today()
@@ -867,23 +877,14 @@ class Validate(object):
         # print a
         return a
 
+    def Email(self, email):
+        if len(email.split('@')) != 2 or ' ' in email:
+            return False, 'please re-check your email'
+        return True, ''
+
 
 def main():
     App = MyApp()
-    # queues that are used to share messages across threads
-    # MessagesTosend = Queue.Queue()
-    # MessagesReceived = Queue.Queue()
-    #
-    # Connection = ServerConnection(MessagesTosend, MessagesReceived)
-    #
-    # app = wx.App(False)
-    # frame = StartFrame(Connection, MessagesTosend, MessagesReceived)
-    #
-    # Connection.SetFrame(frame)
-    # Connection.start()
-    # frame.Show()
-    # # wx.lib.inspection.InspectionTool().Show()
-    # app.MainLoop()
 
 
 if __name__ == "__main__":
