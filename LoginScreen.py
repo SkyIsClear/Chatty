@@ -623,26 +623,31 @@ class MessagesPanel(wx.lib.scrolledpanel.ScrolledPanel, Font_inheritance):
 
 class ConnectedUsersPanel(wx.lib.scrolledpanel.ScrolledPanel,
                           Font_inheritance):
-    def __init__(self, parent, size):
+    def __init__(self, parent, size, users):
         self.parent = parent
         self.size = size
         wx.lib.scrolledpanel.ScrolledPanel.__init__(self, self.parent,
                                                     size=self.size)
         Font_inheritance.__init__(self)
 
-        self.ConnectedUsers = []
+        self.ConnectedUsers = users
         self.UserSizer = wx.BoxSizer(wx.HORIZONTAL)
         self.SetSizer(self.UserSizer)
 
 
         self.SetBackgroundColour('#D3D3D3')
 
+        self.ReArrange()
+
         self.SetupScrolling(scroll_x=True, scroll_y=False)
 
     def AddUser(self, username, image):
         self.ConnectedUsers.append((username, image))
+        self.ConnectedUsers = [tuple(User) for User in self.ConnectedUsers]
         # orders alphabetically by username
         self.ConnectedUsers.sort(key=itemgetter(0))
+        print self.ConnectedUsers
+        self.ConnectedUsers = list(set(self.ConnectedUsers))
         self.ReArrange()
 
     def ReArrange(self):
@@ -658,8 +663,9 @@ class ConnectedUsersPanel(wx.lib.scrolledpanel.ScrolledPanel,
             userLabel.SetFont(self.FontDoYouAlready)
             userLabel.SetForegroundColour('#000000')
             self.UserSizer.Add(userLabel)
-            self.Refresh()
         self.Thaw()
+        self.Refresh()
+        self.Layout()
 
 
 
@@ -671,7 +677,7 @@ class ConnectedUsersPanel(wx.lib.scrolledpanel.ScrolledPanel,
 
 class Room(wx.Frame, Font_inheritance):
     def __init__(self, connection, MessagesToSend, MessagesReceived, RoomTitle,
-                 RoomID):
+                 RoomID, users):
         self.size = (600, 410)
         self.connection = connection
         self.MessagesToSend = MessagesToSend
@@ -690,10 +696,8 @@ class Room(wx.Frame, Font_inheritance):
 
         self.PanelSizer = wx.BoxSizer(wx.VERTICAL)
 
-        self.UsersPanel = ConnectedUsersPanel(self, (600,40))
+        self.UsersPanel = ConnectedUsersPanel(self, (600,20), users)
         self.PanelSizer.Add(self.UsersPanel)
-
-        self.UsersPanel.AddUser('TheAbsoluteRulerOfAll', 'as')
 
         self.messagePanel = MessagesPanel(self, (600, 300))
         self.PanelSizer.Add(self.messagePanel)
@@ -812,7 +816,7 @@ class ChooseFrame(wx.Frame, Font_inheritance):
         message = self.MessagesReceived.get()
         if message['opcode'] == 'roomConfirm':
             if message['success'] == 1:
-                self.parent.PickedRoom(self.room, self.RoomID)
+                self.parent.PickedRoom(self.room, self.RoomID, message['users'])
                 self.Destroy()
 
 
@@ -967,9 +971,9 @@ class MyApp(wx.App):
                                   self.MessagesReceived)
         wx.CallAfter(self.connection.SetFrame, self.Choose)
 
-    def PickedRoom(self, title, roomID):
+    def PickedRoom(self, title, roomID, users):
         self.Room = Room(self.connection, self.MessagesTosend,
-                         self.MessagesReceived, title, roomID)
+                         self.MessagesReceived, title, roomID, users)
         wx.CallAfter(self.connection.SetFrame, self.Room)
 
     def SetConnectedFrame(self, frame):

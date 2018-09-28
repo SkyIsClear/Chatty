@@ -112,8 +112,18 @@ class Server(object):
                                 receivedMessage = CurrentSocket.recv(8192)
                                 messages = receivedMessage.split('|')[:-1]
                             except Exception as error:
-                                # deleting socket from dictionary by finding index of it and finding key which corresponds to it
+                                disconnectedUser = Users.GetBySocket(
+                                    CurrentSocket)
+                                if disconnectedUser.room:
+                                    for user in self.Rooms[disconnectedUser.room]:
+                                        self.MessagesToSend.append(
+                                            ({'opcode': 'userLeft',
+                                              'username': disconnectedUser.username},
+                                             user))
+                                    self.Rooms[disconnectedUser.room].remove(disconnectedUser)
+                                # removing socket from lists
                                 Users.RemoveBySocket(CurrentSocket)
+
                                 break
                             if receivedMessage == "":
                                 Users.RemoveBySocket(CurrentSocket)
@@ -225,19 +235,23 @@ class Server(object):
                     self.MessagesToSend.append(({'opcode': 'userLeft',
                                                  'username': sender.username},
                                                 user))
+                self.Rooms[sender.room].remove(sender)
             Users.RemoveByName(message['username'])
 
         if action == 'joinRoom':
-            if message['roomID'] <= 3 and message['roomID'] >= 0:
+            if message['roomID'] <= 3 and message['roomID'] >= 0 and\
+                    not sender in self.Rooms[message['roomID']]:
                 self.Rooms[message['roomID']].append(sender)
                 sender.room = message['roomID']
                 self.MessagesToSend.append((
-                    {'opcode': 'roomConfirm', 'success': 1, 'error': ""}
-                    , sender))
+                    {'opcode': 'roomConfirm', 'success': 1, 'error': "",
+                     'users': [(User.username, '') for User in
+                               self.Rooms[message['roomID']]]}, sender))
                 for user in self.Rooms[message['roomID']]:
                     self.MessagesToSend.append((
                         {'opcode': 'userJoin', 'username': sender.username,
                          'image': ''}, user))
+
             else:
                 self.MessagesToSend.append(
                     ({'opcode': 'roomConfirm', 'success': 0,
